@@ -141,7 +141,7 @@ TEAM_ALIAS = {
     "turkiye": "Turkey", "cote d'ivoire": "Ivory Coast",
     "usa": "USA", "united states": "USA",
     "uae": "UAE", "bosnia-herzegovina": "Bosnia",
-    "curaçao": "Curacao", "dr congo": "DR Congo", "congo dr": "DR Congo",
+    "curaÃ§ao": "Curacao", "dr congo": "DR Congo", "congo dr": "DR Congo",
     "new zealand": "New Zealand",
 }
 
@@ -326,15 +326,15 @@ def format_alert(res: dict) -> str:
     b = res["bet"]
     p = res["p_model"]
     return (
-        f"🎯 *VALUE BET DETECTE*\n\n"
-        f"*{b.team}*  —  _{b.market.replace('_',' ').title()}_\n"
-        f"🏪 Cote Izibet: *{b.odds_dec:.2f}*\n"
-        f"⚖️ Cote fair: {1/p:.2f}\n"
-        f"📈 Edge: *+{res['edge']*100:.1f}%*\n"
-        f"🎰 Kelly: {res['kelly']*100:.1f}%\n"
-        f"💰 *Mise: {res['stake_units']:.1f} units*\n"
-        f"   _(br {int(BANKROLL)}u · {int(KELLY_FRAC*100)}% Kelly · cap {int(MAX_STAKE)}u)_\n\n"
-        f"🕒 {datetime.now().strftime('%d/%m %H:%M')}"
+        f"ð¯ *VALUE BET DETECTE*\n\n"
+        f"*{b.team}*  â  _{b.market.replace('_',' ').title()}_\n"
+        f"ðª Cote Izibet: *{b.odds_dec:.2f}*\n"
+        f"âï¸ Cote fair: {1/p:.2f}\n"
+        f"ð Edge: *+{res['edge']*100:.1f}%*\n"
+        f"ð° Kelly: {res['kelly']*100:.1f}%\n"
+        f"ð° *Mise: {res['stake_units']:.1f} units*\n"
+        f"   _(br {int(BANKROLL)}u Â· {int(KELLY_FRAC*100)}% Kelly Â· cap {int(MAX_STAKE)}u)_\n\n"
+        f"ð {datetime.now().strftime('%d/%m %H:%M')}"
     )
 
 
@@ -357,7 +357,7 @@ def send_alert(text: str) -> bool:
 # ============================================================================
 async def start_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"✅ *CDM Sniper receiver up*\n\n"
+        f"â *CDM Sniper receiver up*\n\n"
         f"Ton chat_id: `{update.effective_chat.id}`\n"
         f"Target: @{TARGET}\n"
         f"Forward les messages de @{TARGET} ici pour declencher les analyses.\n\n"
@@ -369,10 +369,10 @@ async def start_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     nb = alerts_1h()
     await update.message.reply_text(
-        f"📊 *CDM Sniper*\n"
+        f"ð *CDM Sniper*\n"
         f"Teams model: {len(MODEL['teams'])}\n"
         f"Alerts (1h): {nb}/{MAX_ALERT_H}\n"
-        f"Edge min: {MIN_EDGE*100:.0f}% · Cotes {MIN_ODDS}-{MAX_ODDS}",
+        f"Edge min: {MIN_EDGE*100:.0f}% Â· Cotes {MIN_ODDS}-{MAX_ODDS}",
         parse_mode="Markdown"
     )
 
@@ -404,7 +404,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not bets:
         if is_test:
-            await msg.reply_text(f"⚠️ Aucun pari detecte dans : {raw[:80]!r}")
+            await msg.reply_text(f"â ï¸ Aucun pari detecte dans : {raw[:80]!r}")
         return
 
     if alerts_1h() >= MAX_ALERT_H:
@@ -417,11 +417,70 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         logging.info("  %s/%s @%.2f -> %s", bet.market, bet.team, bet.odds_dec, res["reason"])
         if not res["value"]:
             if is_test:
-                await msg.reply_text(f"❌ {bet.market}/{bet.team} @{bet.odds_dec} : {res['reason']}")
+                await msg.reply_text(f"â {bet.market}/{bet.team} @{bet.odds_dec} : {res['reason']}")
             continue
         text = format_alert(res)
         if send_alert(text):
             record_alert(bet.market, bet.team, bet.odds_dec, res["edge"], res["stake_units"], res["p_model"], raw)
+
+
+# ============================================================================
+# LIVE MARKET POLLING (Polymarket every 30 min)
+# ============================================================================
+POLYMARKET_GAMMA = "https://gamma-api.polymarket.com/markets"
+TEAM_RE_POLY = re.compile(r"Will (.+?) win the 2026 FIFA World Cup\??", re.I)
+REFRESH_INTERVAL_SEC = int(os.getenv("REFRESH_INTERVAL_SEC", "1800"))
+
+
+def fetch_polymarket_winner() -> dict:
+    out = {}
+    try:
+        for offset in range(0, 2000, 500):
+            r = requests.get(POLYMARKET_GAMMA, params={
+                "closed": "false", "active": "true",
+                "limit": "500", "offset": str(offset),
+            }, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            if not data:
+                break
+            for m in data:
+                q = m.get("question") or ""
+                match = TEAM_RE_POLY.match(q)
+                if not match:
+                    continue
+                team = normalize_team(match.group(1))
+                bid = m.get("bestBid")
+                ask = m.get("bestAsk")
+                mid = ((bid + ask) / 2) if (bid and ask) else m.get("lastTradePrice")
+                if mid:
+                    out[team] = mid
+            if len(data) < 500:
+                break
+    except Exception as e:
+        logging.exception("Polymarket fetch failed: %s", e)
+    return out
+
+
+async def refresh_market_loop():
+    while True:
+        try:
+            logging.info("[POLL] Refreshing Polymarket winner market...")
+            poly_probs = await asyncio.to_thread(fetch_polymarket_winner)
+            updated = 0
+            for team, mid_prob in poly_probs.items():
+                rec = MODEL["teams"].setdefault(team, {"mc": {}, "market": {}})
+                rec.setdefault("market", {})["winner"] = mid_prob
+                updated += 1
+            logging.info("[POLL] Polymarket: updated %d teams", updated)
+        except Exception as e:
+            logging.exception("[POLL] Refresh loop error: %s", e)
+        await asyncio.sleep(REFRESH_INTERVAL_SEC)
+
+
+async def post_init(app):
+    asyncio.create_task(refresh_market_loop())
+    logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
 
 
 def main():
@@ -430,16 +489,16 @@ def main():
         logging.error("Missing BOT_TOKEN or CHAT_ID")
         return
     logging.info("Starting CDM Sniper (single-file, receiver mode)")
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
     # Startup notification
     send_alert(
-        f"✅ *CDM Sniper ON (single-file)*\n"
+        f"â *CDM Sniper ON (single-file)*\n"
         f"Ecoute les forwards de @{TARGET}\n"
-        f"Edge min: {MIN_EDGE*100:.0f}% · cotes {MIN_ODDS}-{MAX_ODDS}\n"
+        f"Edge min: {MIN_EDGE*100:.0f}% Â· cotes {MIN_ODDS}-{MAX_ODDS}\n"
         f"/status pour l'etat"
     )
     app.run_polling(drop_pending_updates=True)
