@@ -141,7 +141,7 @@ TEAM_ALIAS = {
     "turkiye": "Turkey", "cote d'ivoire": "Ivory Coast",
     "usa": "USA", "united states": "USA",
     "uae": "UAE", "bosnia-herzegovina": "Bosnia",
-    "curaÃ§ao": "Curacao", "dr congo": "DR Congo", "congo dr": "DR Congo",
+    "curaÃÂ§ao": "Curacao", "dr congo": "DR Congo", "congo dr": "DR Congo",
     "new zealand": "New Zealand",
 }
 
@@ -326,15 +326,15 @@ def format_alert(res: dict) -> str:
     b = res["bet"]
     p = res["p_model"]
     return (
-        f"ð¯ *VALUE BET DETECTE*\n\n"
-        f"*{b.team}*  â  _{b.market.replace('_',' ').title()}_\n"
-        f"ðª Cote Izibet: *{b.odds_dec:.2f}*\n"
-        f"âï¸ Cote fair: {1/p:.2f}\n"
-        f"ð Edge: *+{res['edge']*100:.1f}%*\n"
-        f"ð° Kelly: {res['kelly']*100:.1f}%\n"
-        f"ð° *Mise: {res['stake_units']:.1f} units*\n"
-        f"   _(br {int(BANKROLL)}u Â· {int(KELLY_FRAC*100)}% Kelly Â· cap {int(MAX_STAKE)}u)_\n\n"
-        f"ð {datetime.now().strftime('%d/%m %H:%M')}"
+        f"Ã°ÂÂÂ¯ *VALUE BET DETECTE*\n\n"
+        f"*{b.team}*  Ã¢ÂÂ  _{b.market.replace('_',' ').title()}_\n"
+        f"Ã°ÂÂÂª Cote Izibet: *{b.odds_dec:.2f}*\n"
+        f"Ã¢ÂÂÃ¯Â¸Â Cote fair: {1/p:.2f}\n"
+        f"Ã°ÂÂÂ Edge: *+{res['edge']*100:.1f}%*\n"
+        f"Ã°ÂÂÂ° Kelly: {res['kelly']*100:.1f}%\n"
+        f"Ã°ÂÂÂ° *Mise: {res['stake_units']:.1f} units*\n"
+        f"   _(br {int(BANKROLL)}u ÃÂ· {int(KELLY_FRAC*100)}% Kelly ÃÂ· cap {int(MAX_STAKE)}u)_\n\n"
+        f"Ã°ÂÂÂ {datetime.now().strftime('%d/%m %H:%M')}"
     )
 
 
@@ -357,7 +357,7 @@ def send_alert(text: str) -> bool:
 # ============================================================================
 async def start_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"â *CDM Sniper receiver up*\n\n"
+        f"Ã¢ÂÂ *CDM Sniper receiver up*\n\n"
         f"Ton chat_id: `{update.effective_chat.id}`\n"
         f"Target: @{TARGET}\n"
         f"Forward les messages de @{TARGET} ici pour declencher les analyses.\n\n"
@@ -369,10 +369,10 @@ async def start_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     nb = alerts_1h()
     await update.message.reply_text(
-        f"ð *CDM Sniper*\n"
+        f"Ã°ÂÂÂ *CDM Sniper*\n"
         f"Teams model: {len(MODEL['teams'])}\n"
         f"Alerts (1h): {nb}/{MAX_ALERT_H}\n"
-        f"Edge min: {MIN_EDGE*100:.0f}% Â· Cotes {MIN_ODDS}-{MAX_ODDS}",
+        f"Edge min: {MIN_EDGE*100:.0f}% ÃÂ· Cotes {MIN_ODDS}-{MAX_ODDS}",
         parse_mode="Markdown"
     )
 
@@ -404,7 +404,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if not bets:
         if is_test:
-            await msg.reply_text(f"â ï¸ Aucun pari detecte dans : {raw[:80]!r}")
+            await msg.reply_text(f"Ã¢ÂÂ Ã¯Â¸Â Aucun pari detecte dans : {raw[:80]!r}")
         return
 
     if alerts_1h() >= MAX_ALERT_H:
@@ -417,7 +417,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         logging.info("  %s/%s @%.2f -> %s", bet.market, bet.team, bet.odds_dec, res["reason"])
         if not res["value"]:
             if is_test:
-                await msg.reply_text(f"â {bet.market}/{bet.team} @{bet.odds_dec} : {res['reason']}")
+                await msg.reply_text(f"Ã¢ÂÂ {bet.market}/{bet.team} @{bet.odds_dec} : {res['reason']}")
             continue
         text = format_alert(res)
         if send_alert(text):
@@ -480,7 +480,140 @@ async def refresh_market_loop():
 
 async def post_init(app):
     asyncio.create_task(refresh_market_loop())
+    asyncio.create_task(refresh_betfair_loop())
     logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
+
+
+# ============================================================================
+# BETFAIR EXCHANGE POLLING
+# ============================================================================
+BETFAIR_USERNAME = os.getenv("BETFAIR_USERNAME", "")
+BETFAIR_PASSWORD = os.getenv("BETFAIR_PASSWORD", "")
+BETFAIR_APP_KEY = os.getenv("BETFAIR_APP_KEY", "")
+BETFAIR_COMP_NAME = os.getenv("BETFAIR_COMPETITION_NAME", "FIFA World Cup")
+
+_BF_SESSION = {"token": None, "expires": 0}
+
+
+def betfair_login() -> str | None:
+    if not (BETFAIR_USERNAME and BETFAIR_PASSWORD and BETFAIR_APP_KEY):
+        return None
+    if _BF_SESSION["token"] and _BF_SESSION["expires"] > time.time():
+        return _BF_SESSION["token"]
+    try:
+        r = requests.post("https://identitysso.betfair.com/api/login",
+            headers={"X-Application": BETFAIR_APP_KEY,
+                     "Content-Type": "application/x-www-form-urlencoded",
+                     "Accept": "application/json"},
+            data={"username": BETFAIR_USERNAME, "password": BETFAIR_PASSWORD},
+            timeout=15)
+        r.raise_for_status()
+        j = r.json()
+        if j.get("status") != "SUCCESS":
+            logging.error("Betfair login failed: %s", j)
+            return None
+        _BF_SESSION["token"] = j["token"]
+        _BF_SESSION["expires"] = time.time() + 3600 * 3  # 3h
+        return j["token"]
+    except Exception as e:
+        logging.exception("Betfair login error: %s", e)
+        return None
+
+
+def bf_api(endpoint: str, payload: dict, token: str):
+    r = requests.post(f"https://api.betfair.com/exchange/betting/rest/v1.0/{endpoint}",
+        json=payload,
+        headers={"X-Application": BETFAIR_APP_KEY, "X-Authentication": token,
+                 "Content-Type": "application/json", "Accept": "application/json"},
+        timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch_betfair_all() -> dict:
+    """Returns {(market_key, selection): mid_prob}."""
+    out = {}
+    token = betfair_login()
+    if not token:
+        return out
+    try:
+        # Find WC competition
+        comps = bf_api("listCompetitions/",
+            {"filter": {"eventTypeIds": ["1"], "textQuery": BETFAIR_COMP_NAME}}, token)
+        if not comps:
+            return out
+        comp_id = sorted(comps, key=lambda c: -c.get("marketCount", 0))[0]["competition"]["id"]
+
+        # List markets
+        markets = bf_api("listMarketCatalogue/", {
+            "filter": {"competitionIds": [comp_id]},
+            "marketProjection": ["EVENT", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION"],
+            "maxResults": "200", "sort": "FIRST_TO_START",
+        }, token)
+
+        ids = [m["marketId"] for m in markets]
+        prices = {}
+        for i in range(0, len(ids), 40):
+            batch = ids[i:i+40]
+            j = bf_api("listMarketBook/", {
+                "marketIds": batch,
+                "priceProjection": {"priceData": ["EX_BEST_OFFERS"]},
+            }, token)
+            for mb in j:
+                prices[mb["marketId"]] = mb
+
+        for m in markets:
+            mname = (m.get("marketName") or "").lower()
+            if "outright winner" in mname or "world cup winner" in mname:
+                mk = "winner"
+            elif "to reach the final" in mname:
+                mk = "finalist"
+            elif "to reach the semi" in mname:
+                mk = "semi"
+            elif "top goalscorer" in mname or "golden boot" in mname:
+                mk = "top_scorer"
+            else:
+                continue
+            runners = {r["selectionId"]: r["runnerName"] for r in m.get("runners", [])}
+            mb = prices.get(m["marketId"])
+            if not mb:
+                continue
+            for r in mb.get("runners", []):
+                sel = normalize_team(runners.get(r["selectionId"], ""))
+                ex = r.get("ex", {})
+                backs = ex.get("availableToBack") or []
+                if not backs:
+                    continue
+                back = backs[0]["price"]
+                lays = ex.get("availableToLay") or []
+                lay = lays[0]["price"] if lays else None
+                mid_odds = ((back + lay) / 2) if (back and lay) else back
+                if mid_odds and mid_odds > 1:
+                    out[(mk, sel)] = 1 / mid_odds
+    except Exception as e:
+        logging.exception("Betfair fetch error: %s", e)
+    return out
+
+
+async def refresh_betfair_loop():
+    while True:
+        try:
+            logging.info("[POLL] Refreshing Betfair markets...")
+            bf_probs = await asyncio.to_thread(fetch_betfair_all)
+            updated = 0
+            for (mk, team), prob in bf_probs.items():
+                if mk == "top_scorer":
+                    ts = MODEL.setdefault("top_scorer", {}).setdefault(team, {"mc": 0, "team": ""})
+                    ts.setdefault("market", 0)
+                    ts["market"] = prob
+                else:
+                    rec = MODEL["teams"].setdefault(team, {"mc": {}, "market": {}})
+                    rec.setdefault("market", {})[mk] = prob
+                updated += 1
+            logging.info("[POLL] Betfair: updated %d pairs", updated)
+        except Exception as e:
+            logging.exception("[POLL] Betfair refresh error: %s", e)
+        await asyncio.sleep(REFRESH_INTERVAL_SEC)
 
 
 def main():
@@ -496,9 +629,9 @@ def main():
 
     # Startup notification
     send_alert(
-        f"â *CDM Sniper ON (single-file)*\n"
+        f"Ã¢ÂÂ *CDM Sniper ON (single-file)*\n"
         f"Ecoute les forwards de @{TARGET}\n"
-        f"Edge min: {MIN_EDGE*100:.0f}% Â· cotes {MIN_ODDS}-{MAX_ODDS}\n"
+        f"Edge min: {MIN_EDGE*100:.0f}% ÃÂ· cotes {MIN_ODDS}-{MAX_ODDS}\n"
         f"/status pour l'etat"
     )
     app.run_polling(drop_pending_updates=True)
