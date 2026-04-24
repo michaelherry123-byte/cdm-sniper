@@ -41,7 +41,9 @@ MAX_ODDS    = float(os.getenv("MAX_ODDS", "50"))
 BANKROLL    = float(os.getenv("BANKROLL_UNITS", "100"))
 KELLY_FRAC  = float(os.getenv("KELLY_FRAC", "0.25"))
 MAX_STAKE   = float(os.getenv("MAX_STAKE_UNITS", "5"))
-BLEND_W     = float(os.getenv("BLEND_MARKET_WEIGHT", "0.6"))
+BLEND_W     = float(os.getenv("BLEND_MARKET_WEIGHT", "0.35"))
+FMD_W       = float(os.getenv("BLEND_FMD_WEIGHT", "0.50"))
+MC_W        = float(os.getenv("BLEND_MC_WEIGHT", "0.15"))
 DEDUP_MIN   = int(os.getenv("DEDUP_COOLDOWN_MIN", "360"))
 MAX_ALERT_H = int(os.getenv("MAX_ALERTS_PER_HOUR", "20"))
 
@@ -143,7 +145,62 @@ TEAM_ALIAS = {
     "uae": "UAE", "bosnia-herzegovina": "Bosnia",
     "curaÃÂ§ao": "Curacao", "dr congo": "DR Congo", "congo dr": "DR Congo",
     "new zealand": "New Zealand",
+    "cabo verde": "Cabo Verde", "cape verde": "Cabo Verde",
+    "bih": "Bosnia", "curacao": "Curacao", "congo-kinshasa": "DR Congo",
 }
+
+FMD_DATA = {
+    "Spain":          {"winner":0.197, "finalist":0.312, "semi":0.460, "quarter":0.584, "r16":0.759},
+    "France":         {"winner":0.132, "finalist":0.219, "semi":0.370, "quarter":0.527, "r16":0.765},
+    "Argentina":      {"winner":0.129, "finalist":0.223, "semi":0.365, "quarter":0.523, "r16":0.667},
+    "England":        {"winner":0.109, "finalist":0.198, "semi":0.333, "quarter":0.522, "r16":0.749},
+    "Brazil":         {"winner":0.083, "finalist":0.156, "semi":0.278, "quarter":0.460, "r16":0.678},
+    "Portugal":       {"winner":0.083, "finalist":0.163, "semi":0.295, "quarter":0.498, "r16":0.717},
+    "Germany":        {"winner":0.052, "finalist":0.109, "semi":0.216, "quarter":0.360, "r16":0.676},
+    "Netherlands":    {"winner":0.042, "finalist":0.090, "semi":0.187, "quarter":0.352, "r16":0.517},
+    "Belgium":        {"winner":0.024, "finalist":0.061, "semi":0.138, "quarter":0.345, "r16":0.623},
+    "Uruguay":        {"winner":0.016, "finalist":0.044, "semi":0.106, "quarter":0.217, "r16":0.391},
+    "Mexico":         {"winner":0.015, "finalist":0.042, "semi":0.102, "quarter":0.254, "r16":0.567},
+    "Croatia":        {"winner":0.014, "finalist":0.042, "semi":0.101, "quarter":0.214, "r16":0.481},
+    "Ecuador":        {"winner":0.013, "finalist":0.036, "semi":0.093, "quarter":0.200, "r16":0.489},
+    "Japan":          {"winner":0.012, "finalist":0.032, "semi":0.083, "quarter":0.192, "r16":0.352},
+    "USA":            {"winner":0.010, "finalist":0.028, "semi":0.073, "quarter":0.202, "r16":0.450},
+    "Switzerland":    {"winner":0.008, "finalist":0.024, "semi":0.070, "quarter":0.214, "r16":0.517},
+    "Colombia":       {"winner":0.008, "finalist":0.024, "semi":0.068, "quarter":0.158, "r16":0.386},
+    "Norway":         {"winner":0.007, "finalist":0.022, "semi":0.063, "quarter":0.157, "r16":0.362},
+    "Austria":        {"winner":0.006, "finalist":0.020, "semi":0.054, "quarter":0.133, "r16":0.274},
+    "Senegal":        {"winner":0.006, "finalist":0.019, "semi":0.055, "quarter":0.148, "r16":0.340},
+    "Morocco":        {"winner":0.005, "finalist":0.019, "semi":0.057, "quarter":0.159, "r16":0.343},
+    "Turkey":         {"winner":0.005, "finalist":0.016, "semi":0.045, "quarter":0.135, "r16":0.360},
+    "Canada":         {"winner":0.004, "finalist":0.014, "semi":0.050, "quarter":0.166, "r16":0.437},
+    "Paraguay":       {"winner":0.003, "finalist":0.013, "semi":0.041, "quarter":0.126, "r16":0.341},
+    "Scotland":       {"winner":0.003, "finalist":0.010, "semi":0.034, "quarter":0.110, "r16":0.272},
+    "Sweden":         {"winner":0.003, "finalist":0.009, "semi":0.030, "quarter":0.089, "r16":0.208},
+    "Egypt":          {"winner":0.002, "finalist":0.007, "semi":0.026, "quarter":0.094, "r16":0.302},
+    "Czechia":        {"winner":0.001, "finalist":0.008, "semi":0.031, "quarter":0.120, "r16":0.345},
+    "Korea Republic": {"winner":0.001, "finalist":0.007, "semi":0.026, "quarter":0.101, "r16":0.304},
+    "Australia":      {"winner":0.001, "finalist":0.005, "semi":0.020, "quarter":0.075, "r16":0.236},
+    "Ivory Coast":    {"winner":0.001, "finalist":0.004, "semi":0.017, "quarter":0.066, "r16":0.239},
+    "Iran":           {"winner":0.001, "finalist":0.005, "semi":0.019, "quarter":0.076, "r16":0.267},
+    "Algeria":        {"winner":0.001, "finalist":0.004, "semi":0.020, "quarter":0.063, "r16":0.168},
+    "Bosnia":         {"winner":0.001, "finalist":0.003, "semi":0.014, "quarter":0.068, "r16":0.237},
+    "Tunisia":        {"winner":0.0005,"finalist":0.002, "semi":0.008, "quarter":0.029, "r16":0.090},
+    "Ghana":          {"winner":0.0005,"finalist":0.002, "semi":0.008, "quarter":0.028, "r16":0.106},
+    "DR Congo":       {"winner":0.0005,"finalist":0.001, "semi":0.007, "quarter":0.028, "r16":0.116},
+    "South Africa":   {"winner":0.0005,"finalist":0.001, "semi":0.006, "quarter":0.035, "r16":0.139},
+    "Panama":         {"winner":0.0005,"finalist":0.001, "semi":0.007, "quarter":0.030, "r16":0.110},
+    "Saudi Arabia":   {"winner":0.0005,"finalist":0.001, "semi":0.005, "quarter":0.024, "r16":0.085},
+    "Uzbekistan":     {"winner":0.0005,"finalist":0.001, "semi":0.004, "quarter":0.021, "r16":0.092},
+    "Qatar":          {"winner":0.0005,"finalist":0.001, "semi":0.005, "quarter":0.032, "r16":0.134},
+    "New Zealand":    {"winner":0.0005,"finalist":0.0005,"semi":0.005, "quarter":0.025, "r16":0.128},
+    "Jordan":         {"winner":0.0001,"finalist":0.0005,"semi":0.001, "quarter":0.012, "r16":0.049},
+    "Cabo Verde":     {"winner":0.0001,"finalist":0.0005,"semi":0.002, "quarter":0.010, "r16":0.045},
+    "Iraq":           {"winner":0.0001,"finalist":0.0005,"semi":0.001, "quarter":0.009, "r16":0.043},
+    "Haiti":          {"winner":0.0001,"finalist":0.0005,"semi":0.001, "quarter":0.009, "r16":0.043},
+    "Haiti":          {"winner":0.0001,"finalist":0.0005,"semi":0.001, "quarter":0.004, "r16":0.023},
+    "Curacao":        {"winner":0.0001,"finalist":0.0001,"semi":0.0005,"quarter":0.003, "r16":0.021},
+}
+
 
 
 def normalize_team(name: str) -> str:
@@ -153,12 +210,16 @@ def normalize_team(name: str) -> str:
     return TEAM_ALIAS.get(k, name.strip().title())
 
 
-def blend_prob(mc: float | None, market: float | None) -> float | None:
-    if mc is None and market is None:
+def blend_prob(fmd: float | None, mc: float | None, market: float | None) -> float | None:
+    """Bayesian blend: FMD + Market + MC. Rebalance when sources missing."""
+    sources = []
+    if fmd is not None:    sources.append((FMD_W, fmd))
+    if market is not None: sources.append((BLEND_W, market))
+    if mc is not None:     sources.append((MC_W, mc))
+    if not sources:
         return None
-    if mc is None: return market
-    if market is None: return mc
-    return BLEND_W * market + (1 - BLEND_W) * mc
+    total_w = sum(w for w, _ in sources)
+    return sum(w * p for w, p in sources) / total_w
 
 
 def get_prob(team: str, market: str) -> float | None:
@@ -168,12 +229,13 @@ def get_prob(team: str, market: str) -> float | None:
         return rec["mc"] if rec else None
     if market == "reach_final":
         market = "finalist"
-    rec = MODEL["teams"].get(team_n)
-    if not rec:
-        return None
+    rec = MODEL["teams"].get(team_n) or {}
     mc = (rec.get("mc") or {}).get(market)
     mk = (rec.get("market") or {}).get(market)
-    return blend_prob(mc, mk)
+    fmd = (FMD_DATA.get(team_n) or {}).get(market)
+    if mc is None and mk is None and fmd is None:
+        return None
+    return blend_prob(fmd, mc, mk)
 
 
 # ============================================================================
