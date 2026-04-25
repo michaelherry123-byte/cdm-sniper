@@ -25,9 +25,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import threading
 import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+
+# Izibet client (separate module - voir izibet_client.py)
+try:
+    from izibet_client import IzibetClient, izibet_refresh_loop_blocking, COUPON_OVERVIEW
+    IZIBET_AVAILABLE = True
+except ImportError:
+    IZIBET_AVAILABLE = False
 
 # ============================================================================
 # CONFIG
@@ -46,6 +54,9 @@ FMD_W       = float(os.getenv("BLEND_FMD_WEIGHT", "0.50"))
 MC_W        = float(os.getenv("BLEND_MC_WEIGHT", "0.15"))
 DEDUP_MIN   = int(os.getenv("DEDUP_COOLDOWN_MIN", "360"))
 MAX_ALERT_H = int(os.getenv("MAX_ALERTS_PER_HOUR", "20"))
+IZIBET_ENABLED = os.getenv("IZIBET_ENABLED", "1") == "1"
+IZIBET_POLL_SEC = int(os.getenv("IZIBET_POLL_SEC", "30"))
+IZIBET_DIGEST_MIN = int(os.getenv("IZIBET_DIGEST_MIN", "60"))  # send Telegram digest every X min
 
 DB_PATH = Path(__file__).parent / "cdm_sniper.db"
 
@@ -540,9 +551,66 @@ async def refresh_market_loop():
         await asyncio.sleep(REFRESH_INTERVAL_SEC)
 
 
+# ============================================================================
+# IZIBET CLIENT (background thread + async digest)
+# ============================================================================
+_izibet_client = None
+_izibet_thread = None
+_izibet_stop = None
+
+
+def start_izibet_thread():
+    """Lance le client Izibet dans un thread en background (sync requests)."""
+    global _izibet_client, _izibet_thread, _izibet_stop
+    if not IZIBET_AVAILABLE or not IZIBET_ENABLED:
+        logging.info("[IZIBET] Disabled or module not available")
+        return
+    if _izibet_thread and _izibet_thread.is_alive():
+        return
+    _izibet_client = IzibetClient()
+    _izibet_stop = threading.Event()
+    _izibet_thread = threading.Thread(
+        target=izibet_refresh_loop_blocking,
+        args=(_izibet_client, [COUPON_OVERVIEW], IZIBET_POLL_SEC, _izibet_stop),
+        daemon=True,
+        name="izibet-poller",
+    )
+    _izibet_thread.start()
+    logging.info("[IZIBET] Background thread started (poll=%ds)", IZIBET_POLL_SEC)
+
+
+async def izibet_digest_loop():
+    """Envoie un digest Telegram des matches CDM 2026 detectes sur Izibet."""
+    while True:
+        await asyncio.sleep(IZIBET_DIGEST_MIN * 60)
+        if not _izibet_client:
+            continue
+        try:
+            cdm = _izibet_client.cdm_matches()
+            total_events = len(_izibet_client.events)
+            if not cdm and total_events == 0:
+                continue
+            lines = [
+                f"🎯 *Izibet Bet Tracker — CDM 2026 watch*",
+                f"Events catalog: {total_events}",
+                f"CDM-eligible matches: {len(cdm)}",
+                "",
+            ]
+            for m in cdm[:15]:
+                lines.append(f"• {m.home_canonical or m.home} vs {m.away_canonical or m.away}  · {m.start_date[:16]}")
+            text = "\n".join(lines)
+            send_alert(text)
+            logging.info("[IZIBET] Digest sent (%d CDM matches)", len(cdm))
+        except Exception as e:
+            logging.exception("[IZIBET] Digest loop error: %s", e)
+
+
 async def post_init(app):
     asyncio.create_task(refresh_market_loop())
     asyncio.create_task(refresh_betfair_loop())
+    if IZIBET_AVAILABLE and IZIBET_ENABLED:
+        start_izibet_thread()
+        asyncio.create_task(izibet_digest_loop())
     logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
 
 
