@@ -37,6 +37,9 @@ try:
 except ImportError:
     IZIBET_AVAILABLE = False
 
+# State tracking for outright watcher (in-memory; resets on Railway redeploy = OK).
+_izibet_outright_seen = set()
+
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -57,6 +60,7 @@ MAX_ALERT_H = int(os.getenv("MAX_ALERTS_PER_HOUR", "20"))
 IZIBET_ENABLED = os.getenv("IZIBET_ENABLED", "1") == "1"
 IZIBET_POLL_SEC = int(os.getenv("IZIBET_POLL_SEC", "30"))
 IZIBET_DIGEST_MIN = int(os.getenv("IZIBET_DIGEST_MIN", "60"))  # send Telegram digest every X min
+IZIBET_OUTRIGHT_SCAN_MIN = int(os.getenv("IZIBET_OUTRIGHT_SCAN_MIN", "60"))  # scan Largo Plazo every X min
 
 DB_PATH = Path(__file__).parent / "cdm_sniper.db"
 
@@ -605,6 +609,52 @@ async def izibet_digest_loop():
             logging.exception("[IZIBET] Digest loop error: %s", e)
 
 
+async def izibet_outright_watcher_loop():
+    """Periodically scan Izibet's "Largo Plazo" (Long Term / outright) section
+    looking for new CDM 2026 outright markets (Winner, Top Scorer, Group Winner).
+
+    Currently Izibet shop catalog has no CDM 2026 outrights listed; they are
+    expected to appear ~2-4 weeks before tournament kickoff (June 2026). This
+    watcher pings via Telegram the FIRST time a matching market is detected,
+    so Michael can manually go check the cotes (and we can then extend the
+    client to auto-parse outright Market/Outcome entries).
+    """
+    # Initial delay so the bot has time to create its Izibet session
+    await asyncio.sleep(60)
+    while True:
+        try:
+            if _izibet_client:
+                outrights = await asyncio.to_thread(_izibet_client.scan_outright_section)
+                new_ones = []
+                for o in outrights:
+                    eid = o.get("event_id") or o.get("title")
+                    if eid and eid not in _izibet_outright_seen:
+                        _izibet_outright_seen.add(eid)
+                        new_ones.append(o)
+                if new_ones:
+                    lines = [
+                        "🚨 *IZIBET — OUTRIGHT CDM 2026 DETECTÉ*",
+                        "",
+                        "Nouveaux marchés outright disponibles dans la section "
+                        "*Largo Plazo* (Long Term) sur l'app Izibet Bet Tracker :",
+                        "",
+                    ]
+                    for o in new_ones[:10]:
+                        lines.append(f"• {o.get('title', '?')} ({o.get('type', '?')})")
+                    lines.append("")
+                    lines.append("➡️ Vas voir les cotes dans l'app maintenant.")
+                    lines.append("➡️ Reviens me dire de coder le parser auto.")
+                    send_alert("\n".join(lines))
+                    logging.info("[IZIBET] Outright detected: %d new markets",
+                                 len(new_ones))
+                else:
+                    logging.info("[IZIBET] Outright scan: no CDM markets yet "
+                                 "(found %d total outrights)", len(outrights))
+        except Exception as e:
+            logging.exception("[IZIBET] Outright watcher error: %s", e)
+        await asyncio.sleep(IZIBET_OUTRIGHT_SCAN_MIN * 60)
+
+
 async def post_init(app):
     asyncio.create_task(refresh_market_loop())
     asyncio.create_task(refresh_betfair_loop())
@@ -615,6 +665,8 @@ async def post_init(app):
         # the client is extended to fetch outright Market/Outcome cotes.
         if os.getenv("IZIBET_DIGEST_ENABLED", "0") == "1":
             asyncio.create_task(izibet_digest_loop())
+        # Always-on outright watcher: pings when CDM outrights appear on Izibet.
+        asyncio.create_task(izibet_outright_watcher_loop())
     logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
 
 

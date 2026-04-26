@@ -40,6 +40,36 @@ COUPON_LIVE       = 779
 COUPON_DEFAULT    = 6154
 COUPON_OVERVIEW   = 6316
 
+# Football "Largo Plazo" (Long Term / Outright markets) league ID.
+# Discovered via DOM scan: button.league-link[data-event-id="1574333735"].
+# Currently contains FA Cup Winner, Premier League outrights, etc.
+# CDM 2026 Winner / Top Scorer / Group Winner expected to appear here ~2-4 weeks
+# before tournament start (June 2026).
+LARGO_PLAZO_NODE_ID = "1574333735"
+
+# Keywords (lowercased) that indicate a CDM 2026 outright market title.
+CDM_OUTRIGHT_KEYWORDS = [
+    "mundial 2026",
+    "copa mundial 2026",
+    "copa mundial fifa 2026",
+    "fifa world cup 2026",
+    "world cup 2026",
+    "wm 2026",
+    "coupe du monde 2026",
+    "vencedor mundial",
+    "ganador mundial",
+    "campeón mundial",
+    "campeon mundial",
+    "winner mundial",
+    "máximo goleador mundial",
+    "maximo goleador mundial",
+    "top scorer mundial",
+    "top goalscorer world cup",
+    "grupo a 2026", "grupo b 2026", "grupo c 2026", "grupo d 2026",
+    "grupo e 2026", "grupo f 2026", "grupo g 2026", "grupo h 2026",
+    "grupo i 2026", "grupo j 2026", "grupo k 2026", "grupo l 2026",
+]
+
 # Mapping ES → canonical EN pour matching avec MODEL/FMD_DATA dans main.py
 CDM_NATIONALS_ES = {
     "España": "Spain", "Espana": "Spain",
@@ -237,6 +267,54 @@ class IzibetClient:
     def cdm_matches(self) -> list:
         with self.lock:
             return [e for e in self.events.values() if e.is_cdm_match()]
+
+    # ------------------------------------------------------------------
+    # Outright watcher (CDM 2026 winner, top scorer, group winners)
+    # ------------------------------------------------------------------
+    def scan_outright_section(self) -> list:
+        """Scan the football Largo Plazo (long-term/outright) section and return
+        any market entries whose title looks like a CDM 2026 outright.
+
+        Returns a list of dicts with keys: title, event_id, type, sport,
+        runner_count_hint. Empty list if no CDM outrights are currently listed
+        on Izibet's shop catalog (expected before ~3-4 weeks pre-tournament).
+        """
+        try:
+            qs = self._common_qs()
+            url = (SBS_BASE +
+                   f"JWebGetContentEventNodesV3?{qs}"
+                   f"&eventNodeIds={LARGO_PLAZO_NODE_ID}")
+            r = self.s.get(url, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            logging.warning("[IZIBET] scan_outright_section error: %s", e)
+            return []
+
+        # Update revision from any State entries observed
+        with self.lock:
+            for it in data:
+                if (it.get("ty") == "State" or it.get("type") == "State"):
+                    new_rev = it.get("ar") or it.get("actRevision")
+                    if new_rev:
+                        self.act_revision = new_rev
+
+        candidates = []
+        for it in data:
+            ty = it.get("ty") or it.get("type")
+            if ty not in ("Event", "League", "Sports"):
+                continue
+            title = (it.get("ti") or it.get("title") or "")
+            tl = title.lower()
+            if any(kw in tl for kw in CDM_OUTRIGHT_KEYWORDS):
+                candidates.append({
+                    "title": title,
+                    "event_id": str(it.get("dgn") or it.get("designation")
+                                    or it.get("ui") or ""),
+                    "type": ty,
+                    "sport": it.get("sh") or it.get("sport"),
+                })
+        return candidates
 
 
 def izibet_refresh_loop_blocking(client: IzibetClient,
