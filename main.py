@@ -32,13 +32,23 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 # Izibet client (separate module - voir izibet_client.py)
 try:
-    from izibet_client import IzibetClient, izibet_refresh_loop_blocking, COUPON_OVERVIEW
+    from izibet_client import IzibetClient, izibet_refresh_loop_blocking, COUPON_OVERVIEW, normalize_team_es
     IZIBET_AVAILABLE = True
 except ImportError:
     IZIBET_AVAILABLE = False
+    def normalize_team_es(name):  # fallback no-op
+        return None
+
+# Headless Chromium scraper (optional - requires playwright + chromium installed)
+try:
+    from izibet_scraper import scrape_largo_plazo, PLAYWRIGHT_AVAILABLE
+    IZIBET_SCRAPER_AVAILABLE = PLAYWRIGHT_AVAILABLE
+except ImportError:
+    IZIBET_SCRAPER_AVAILABLE = False
 
 # State tracking for outright watcher (in-memory; resets on Railway redeploy = OK).
 _izibet_outright_seen = set()
+_izibet_scraper_seen_alerts = set()  # dedup scraper alerts
 
 # ============================================================================
 # CONFIG
@@ -61,6 +71,8 @@ IZIBET_ENABLED = os.getenv("IZIBET_ENABLED", "1") == "1"
 IZIBET_POLL_SEC = int(os.getenv("IZIBET_POLL_SEC", "30"))
 IZIBET_DIGEST_MIN = int(os.getenv("IZIBET_DIGEST_MIN", "60"))  # send Telegram digest every X min
 IZIBET_OUTRIGHT_SCAN_MIN = int(os.getenv("IZIBET_OUTRIGHT_SCAN_MIN", "60"))  # scan Largo Plazo every X min
+IZIBET_SCRAPER_ENABLED = os.getenv("IZIBET_SCRAPER_ENABLED", "0") == "1"  # default off — needs Playwright
+IZIBET_SCRAPER_INTERVAL_MIN = int(os.getenv("IZIBET_SCRAPER_INTERVAL_MIN", "30"))
 
 DB_PATH = Path(__file__).parent / "cdm_sniper.db"
 
@@ -655,6 +667,60 @@ async def izibet_outright_watcher_loop():
         await asyncio.sleep(IZIBET_OUTRIGHT_SCAN_MIN * 60)
 
 
+async def izibet_scraper_loop():
+    """Headless Chromium scraper for Izibet outright cotes.
+
+    Disabled by default (IZIBET_SCRAPER_ENABLED=0). Activate when running on
+    Oracle Cloud Free or any host with Playwright + Chromium installed:
+        pip install playwright && playwright install chromium
+        IZIBET_SCRAPER_ENABLED=1
+    """
+    if not IZIBET_SCRAPER_AVAILABLE:
+        logging.warning("[SCRAPER] Playwright not available — install with "
+                        "`pip install playwright && playwright install chromium`")
+        return
+    await asyncio.sleep(180)  # initial delay
+    while True:
+        try:
+            cotes = await asyncio.to_thread(scrape_largo_plazo)
+            value_bets_found = 0
+            for c in cotes:
+                # Map team/player name to canonical
+                canonical = normalize_team_es(c.selection) or c.selection
+                # Only evaluate against teams in our MODEL (CDM nations)
+                if canonical not in MODEL["teams"] and c.market_type != "top_scorer":
+                    continue
+                bet = ParsedBet(
+                    team=canonical,
+                    market=c.market_type or "winner",
+                    odds_dec=c.odds,
+                    raw=f"izibet-scraper:{c.market_event_id}:{c.selection}@{c.odds}",
+                )
+                if was_alerted(bet.market, bet.team, bet.odds_dec):
+                    continue
+                res = evaluate(bet)
+                logging.info("[SCRAPER] %s/%s @%.2f → %s",
+                             bet.market, bet.team, bet.odds_dec, res["reason"])
+                if not res["value"]:
+                    continue
+                # dedup the same alert this session (avoid pinging if scraper sees same cote twice)
+                key = f"{bet.market}|{bet.team}|{round(bet.odds_dec, 2)}"
+                if key in _izibet_scraper_seen_alerts:
+                    continue
+                _izibet_scraper_seen_alerts.add(key)
+                text = format_alert(res)
+                if send_alert(text):
+                    record_alert(bet.market, bet.team, bet.odds_dec,
+                                 res["edge"], res["stake_units"],
+                                 res["p_model"], bet.raw)
+                    value_bets_found += 1
+            logging.info("[SCRAPER] Cycle done: %d cotes scraped, %d value bets alerted",
+                         len(cotes), value_bets_found)
+        except Exception as e:
+            logging.exception("[SCRAPER] loop error: %s", e)
+        await asyncio.sleep(IZIBET_SCRAPER_INTERVAL_MIN * 60)
+
+
 async def post_init(app):
     asyncio.create_task(refresh_market_loop())
     asyncio.create_task(refresh_betfair_loop())
@@ -667,6 +733,12 @@ async def post_init(app):
             asyncio.create_task(izibet_digest_loop())
         # Always-on outright watcher: pings when CDM outrights appear on Izibet.
         asyncio.create_task(izibet_outright_watcher_loop())
+    if IZIBET_SCRAPER_ENABLED and IZIBET_SCRAPER_AVAILABLE:
+        asyncio.create_task(izibet_scraper_loop())
+        logging.info("[SCRAPER] Headless scraper enabled, interval=%dmin",
+                     IZIBET_SCRAPER_INTERVAL_MIN)
+    elif IZIBET_SCRAPER_ENABLED and not IZIBET_SCRAPER_AVAILABLE:
+        logging.warning("[SCRAPER] Enabled but Playwright not installed — skipping")
     logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
 
 
