@@ -610,7 +610,11 @@ async def post_init(app):
     asyncio.create_task(refresh_betfair_loop())
     if IZIBET_AVAILABLE and IZIBET_ENABLED:
         start_izibet_thread()
-        asyncio.create_task(izibet_digest_loop())
+        # Hourly digest disabled by default (only listed match metadata, no value).
+        # Set IZIBET_DIGEST_ENABLED=1 in env to re-enable. Will become useful once
+        # the client is extended to fetch outright Market/Outcome cotes.
+        if os.getenv("IZIBET_DIGEST_ENABLED", "0") == "1":
+            asyncio.create_task(izibet_digest_loop())
     logging.info("Background polling started (every %ds)", REFRESH_INTERVAL_SEC)
 
 
